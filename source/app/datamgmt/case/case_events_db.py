@@ -154,6 +154,7 @@ def get_case_event_comment(event_id, comment_id):
         Comments.comment_uuid,
         Comments.comment_user_id,
         Comments.comment_case_id,
+        Comments.comment_revisions,
         User.name,
         User.user
     ).join(

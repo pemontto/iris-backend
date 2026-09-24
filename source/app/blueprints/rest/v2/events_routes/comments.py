@@ -35,6 +35,7 @@ from app.business.comments import comments_get_filtered_by_event
 from app.business.comments import comments_create_for_event
 from app.business.comments import comments_get_for_event
 from app.business.comments import comments_delete_for_event
+from app.business.comments import immutable_event_comments_enabled
 from app.business.events import events_get
 from app.models.errors import ObjectNotFoundError
 from app.models.cases import CasesEvent
@@ -62,6 +63,7 @@ class CommentsOperations:
             pagination_parameters = parse_pagination_parameters(request)
 
             comments = comments_get_filtered_by_event(event, pagination_parameters)
+            self._mark_immutable(comments.items, event.case_id)
             return response_api_paginated(self._schema, comments)
         except ObjectNotFoundError:
             return response_api_not_found()
@@ -71,6 +73,7 @@ class CommentsOperations:
             event = self._get_event(event_identifier, [CaseAccessLevel.full_access])
             comment = self._schema.load(request.get_json())
             comments_create_for_event(iris_current_user, event, comment)
+            self._mark_immutable([comment], event.case_id)
 
             result = self._schema.dump(comment)
             return response_api_created(result)
@@ -83,7 +86,13 @@ class CommentsOperations:
         try:
             event = self._get_event(event_identifier, [CaseAccessLevel.read_only, CaseAccessLevel.full_access])
             comment = comments_get_for_event(event, identifier)
+            immutable = immutable_event_comments_enabled(event.case_id)
             result = self._schema.dump(comment)
+            if immutable:
+                # comments_get_for_event() returns a projected SQLAlchemy Row,
+                # which is immutable. Add the response-only policy marker after
+                # serialization instead of assigning a transient ORM attribute.
+                result['comment_is_immutable'] = True
             return response_api_success(result)
         except ValidationError as e:
             return response_api_error('Data error', data=e.normalized_messages())
@@ -100,6 +109,8 @@ class CommentsOperations:
     def delete(self, event_identifier, identifier):
         try:
             event = self._get_event(event_identifier, [CaseAccessLevel.full_access])
+            if immutable_event_comments_enabled(event.case_id):
+                return response_api_error('Comment deletion is disabled for immutable event comments', status=403)
             comment = comments_get_for_event(event, identifier)
             if comment.comment_user_id != iris_current_user.id:
                 return ac_api_return_access_denied()
@@ -108,6 +119,12 @@ class CommentsOperations:
             return response_api_deleted()
         except ObjectNotFoundError:
             return response_api_not_found()
+
+    @staticmethod
+    def _mark_immutable(comments, case_identifier):
+        if immutable_event_comments_enabled(case_identifier):
+            for comment in comments:
+                comment.immutable_history_enabled = True
 
 
 events_comments_blueprint = Blueprint('events_comments', __name__, url_prefix='/<int:event_identifier>/comments')

@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy import Text
 from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.db import db
@@ -39,6 +40,7 @@ class Comments(db.Model):
     comment_text = Column(Text)
     comment_date = Column(DateTime)
     comment_update_date = Column(DateTime)
+    comment_revisions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     comment_user_id = Column(ForeignKey('user.id'))
     comment_case_id = Column(ForeignKey('cases.case_id'))
     comment_alert_id = Column(ForeignKey('alerts.alert_id'))

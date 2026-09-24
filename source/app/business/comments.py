@@ -17,6 +17,7 @@
 #  Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from datetime import datetime
+import os
 
 from flask_sqlalchemy.pagination import Pagination
 
@@ -67,6 +68,11 @@ from app.models.pagination_parameters import PaginationParameters
 from app.util import add_obj_history_entry
 from app.datamgmt.alerts.alerts_db import get_alert_comment
 from app.models.alerts import Alert
+
+
+def immutable_event_comments_enabled(_case_identifier: int) -> bool:
+    """Return the installation opt-in state for event-comment edit/delete behaviour."""
+    return os.environ.get('IRIS_IMMUTABLE_EVENT_COMMENTS', '').lower() in ('1', 'true', 'yes', 'on')
 
 
 def comments_get_filtered_by_alert(current_user, permissions, alert_identifier: int, pagination_parameters: PaginationParameters, fallback_customer_access=None) -> Pagination:
@@ -141,6 +147,16 @@ def comments_update_for_case(current_user, comment_text, comment_id, object_type
 
     if comment.comment_user_id != current_user.id:
         raise BusinessProcessingError('Permission denied')
+
+    if object_type == 'events' and immutable_event_comments_enabled(caseid) and comment.comment_text != comment_text:
+        revisions = list(comment.comment_revisions or [])
+        revisions.append({
+            'comment_text': comment.comment_text,
+            'comment_date': datetime.utcnow().isoformat(),
+            'user_id': current_user.id,
+            'user_name': getattr(current_user, 'user_name', None) or getattr(current_user, 'name', None),
+        })
+        comment.comment_revisions = revisions
 
     comment.comment_text = comment_text
     comment.comment_update_date = datetime.utcnow()

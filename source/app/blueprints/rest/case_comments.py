@@ -24,6 +24,7 @@ from app.schema.marshables import CommentSchema
 from app.blueprints.responses import response_error
 from app.blueprints.responses import response_success
 from app.business.comments import comments_update_for_case
+from app.business.comments import immutable_event_comments_enabled
 from app.models.errors import BusinessProcessingError
 from app.blueprints.iris_user import iris_current_user
 
@@ -34,6 +35,8 @@ def case_comment_update(comment_id, object_type, caseid):
         request_data = request.get_json()
         comment_text = request_data.get('comment_text')
         comment = comments_update_for_case(iris_current_user, comment_text, comment_id, object_type, caseid)
+        if object_type == 'events' and immutable_event_comments_enabled(caseid):
+            comment.immutable_history_enabled = True
         return response_success('Comment edited', data=comment_schema.dump(comment))
     except BusinessProcessingError as e:
         return response_error(e.get_message(), data=e.get_data())

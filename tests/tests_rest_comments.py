@@ -16,7 +16,10 @@
 #  along with this program; if not, write to the Free Software Foundation,
 #  Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+import os
 from unittest import TestCase
+from unittest import skipIf
+from unittest import skipUnless
 from iris import Iris
 from iris import ADMINISTRATOR_USER_IDENTIFIER
 from iris import IRIS_PERMISSION_SERVER_ADMINISTRATOR
@@ -27,6 +30,9 @@ from iris import IRIS_CASE_ACCESS_LEVEL_FULL_ACCESS
 
 _IDENTIFIER_FOR_NONEXISTENT_OBJECT = 123456789
 _COMMENT_OF_ANOTHER_CASE = 'comment of another case'
+_IMMUTABLE_EVENT_COMMENTS_ENABLED = os.environ.get('IRIS_IMMUTABLE_EVENT_COMMENTS', '').lower() in (
+    '1', 'true', 'yes', 'on'
+)
 
 
 class TestsRestComments(TestCase):
@@ -656,6 +662,77 @@ class TestsRestComments(TestCase):
         identifier = response['comment_id']
         response = self._subject.update(f'/api/v2/events/{object_identifier}/comments/{identifier}', {})
         self.assertEqual(200, response.status_code)
+
+    @skipUnless(
+        _IMMUTABLE_EVENT_COMMENTS_ENABLED,
+        'Set IRIS_IMMUTABLE_EVENT_COMMENTS=true for both the test runner and API server',
+    )
+    def test_immutable_case_event_comment_keeps_revision_and_denies_delete(self):
+        case_identifier = self._subject.create_dummy_case()
+        event_body = {'event_title': 'title', 'event_category_id': 1,
+                      'event_date': '2025-03-26T00:00:00.000', 'event_tz': '+00:00',
+                      'event_assets': [], 'event_iocs': []}
+        event = self._subject.create(f'/api/v2/cases/{case_identifier}/events', event_body).json()
+        event_identifier = event['event_id']
+        comment = self._subject.create(f'/api/v2/events/{event_identifier}/comments', {
+            'comment_text': 'original observation'
+        }).json()
+
+        edit = self._subject.update(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}',
+            {'comment_text': 'corrected observation'}
+        )
+        self.assertEqual(200, edit.status_code)
+        readback = self._subject.get(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}'
+        ).json()
+        self.assertEqual('corrected observation', readback['comment_text'])
+        self.assertEqual('original observation', readback['comment_revisions'][0]['comment_text'])
+        legacy_readback = self._subject.get(
+            f'/case/timeline/events/{event_identifier}/comments/{comment["comment_id"]}',
+            {'cid': case_identifier}
+        ).json()
+        self.assertEqual('original observation', legacy_readback['data']['comment_revisions'][0]['comment_text'])
+
+        deletion = self._subject.delete(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}'
+        )
+        self.assertEqual(403, deletion.status_code)
+        legacy_deletion = self._subject.create(
+            f'/case/timeline/events/{event_identifier}/comments/{comment["comment_id"]}/delete',
+            {},
+            {'cid': case_identifier}
+        )
+        self.assertEqual(403, legacy_deletion.status_code)
+        self.assertEqual(200, self._subject.get(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}'
+        ).status_code)
+
+    @skipIf(
+        _IMMUTABLE_EVENT_COMMENTS_ENABLED,
+        'Run this compatibility test with IRIS_IMMUTABLE_EVENT_COMMENTS unset for both runner and API server',
+    )
+    def test_case_event_comment_mutations_keep_beta1_behaviour_when_history_is_off(self):
+        case_identifier = self._subject.create_dummy_case()
+        event_body = {'event_title': 'title', 'event_category_id': 1,
+                      'event_date': '2025-03-26T00:00:00.000', 'event_tz': '+00:00',
+                      'event_assets': [], 'event_iocs': []}
+        event = self._subject.create(f'/api/v2/cases/{case_identifier}/events', event_body).json()
+        event_identifier = event['event_id']
+        comment = self._subject.create(f'/api/v2/events/{event_identifier}/comments', {
+            'comment_text': 'original observation'
+        }).json()
+
+        edit = self._subject.update(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}',
+            {'comment_text': 'corrected observation'}
+        )
+        self.assertEqual(200, edit.status_code)
+        self.assertNotIn('comment_revisions', edit.json())
+        deletion = self._subject.delete(
+            f'/api/v2/events/{event_identifier}/comments/{comment["comment_id"]}'
+        )
+        self.assertEqual(204, deletion.status_code)
 
     def test_delete_alerts_comment_should_return_204(self):
         body = {

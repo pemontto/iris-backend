@@ -498,12 +498,25 @@ class CommentSchema(ma.SQLAlchemyAutoSchema):
 
     """
     user = ma.Nested(UserSchema, only=['id', 'user_name', 'user_login', 'user_email'])
+    comment_revisions = fields.Raw(dump_only=True)
+    comment_is_immutable = fields.Boolean(attribute='immutable_history_enabled', dump_only=True)
 
     class Meta:
         model = Comments
         load_instance = True
         include_fk = True
         unknown = EXCLUDE
+
+    @post_dump(pass_original=True)
+    def omit_empty_revisions(self, data, original, **kwargs):
+        # Keep the Beta 1 response shape for comments that have no retained
+        # revisions; the additive field appears only after immutable history
+        # has actually recorded an earlier version.
+        if not getattr(original, 'comment_revisions', None):
+            data.pop('comment_revisions', None)
+        if not hasattr(original, 'immutable_history_enabled'):
+            data.pop('comment_is_immutable', None)
+        return data
 
 
 class CaseNoteRevisionSchema(ma.SQLAlchemyAutoSchema):

@@ -74,6 +74,7 @@ from app.business.events import events_create
 from app.business.events import events_list_filtered
 from app.business.events import events_update
 from app.business.events import events_delete
+from app.business.comments import immutable_event_comments_enabled
 from app.iris_engine.module_handler.module_handler import call_deprecated_on_preload_modules_hook
 
 case_timeline_rest_blueprint = Blueprint('case_timeline_rest', __name__)
@@ -104,6 +105,9 @@ def case_comment_delete(cur_id, com_id, caseid):
     if not event or event.case_id != caseid:
         return response_error("Invalid comment ID")
 
+    if immutable_event_comments_enabled(caseid):
+        return response_error('Comment deletion is disabled for immutable event comments', status=403)
+
     success, msg = delete_event_comment(iris_current_user, cur_id, com_id)
     if not success:
         return response_error(msg)
@@ -127,7 +131,10 @@ def case_comment_get(cur_id, com_id, caseid):
     if not comment:
         return response_error("Invalid comment ID")
 
-    return response_success(data=comment._asdict())
+    comment_data = comment._asdict()
+    if not comment_data.get('comment_revisions'):
+        comment_data.pop('comment_revisions', None)
+    return response_success(data=comment_data)
 
 
 @case_timeline_rest_blueprint.route('/case/timeline/events/<int:cur_id>/comments/<int:com_id>/edit', methods=['POST'])
