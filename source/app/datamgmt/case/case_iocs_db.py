@@ -338,12 +338,11 @@ def search_iocs(search_value, accessible_case_ids=None):
         Client.name.label('customer_name')
     ).filter(
         and_(
-            Ioc.ioc_value.like(search_value),
+            Ioc.ioc_value.ilike(f'%{search_value}%'),
             Ioc.case_id == Cases.case_id,
             Client.client_id == Cases.client_id,
-            Ioc.ioc_tlp_id == Tlp.tlp_id,
             scope_filter
         )
-    ).join(Ioc.ioc_type).all()
+    ).join(Ioc.ioc_type).outerjoin(Ioc.tlp).all()
 
     return [row._asdict() for row in res]
