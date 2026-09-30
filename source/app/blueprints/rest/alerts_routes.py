@@ -24,6 +24,7 @@ from flask import current_app
 from typing import List
 from werkzeug import Response
 
+from app.business.case_timelines import case_ensure_default_timeline_for_escalated_case
 from app.db import db
 from app.blueprints.rest.endpoints import endpoint_deprecated
 from app.blueprints.rest.parsing import parse_comma_separated_identifiers
@@ -644,6 +645,10 @@ def alerts_escalate_route(alert_id) -> Response:
 
         ac_set_new_case_access(iris_current_user, case.case_id, case.client_id)
 
+        case_ensure_default_timeline_for_escalated_case(
+            case.case_id, created_by_id=iris_current_user.id, attach_events=import_as_event
+        )
+
         case = call_modules_hook('on_postload_case_create', case)
 
         add_obj_history_entry(case, 'created')
@@ -924,6 +929,10 @@ def alerts_batch_escalate_route() -> Response:
             return response_error('Failed to create case from alert')
 
         ac_set_new_case_access(iris_current_user, case.case_id, case.client_id)
+
+        case_ensure_default_timeline_for_escalated_case(
+            case.case_id, created_by_id=iris_current_user.id, attach_events=import_as_event
+        )
 
         case = call_modules_hook('on_postload_case_create', case)
 

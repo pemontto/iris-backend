@@ -22,6 +22,7 @@ timelines so the REST blueprints can stay thin.
 
 import re
 
+from app.datamgmt.case.case_events_db import get_case_event_ids
 from app.db import db
 from app.iris_engine.utils.tracker import track_activity
 from app.models.cases import CaseEventTimeline
@@ -175,6 +176,14 @@ def case_ensure_default_timeline(case_id, created_by_id=None):
         created_by_id=created_by_id,
         is_default=True,
     )
+
+
+def case_ensure_default_timeline_for_escalated_case(case_id, created_by_id, attach_events):
+    """Provision Main and optionally attach events imported into a new case."""
+    case_ensure_default_timeline(case_id, created_by_id=created_by_id)
+    if attach_events:
+        for event_id in get_case_event_ids(case_id):
+            attach_event_to_default_timeline_if_unset(event_id, case_id)
 
 
 def _default_timeline_id(case_id):

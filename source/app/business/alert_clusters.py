@@ -25,6 +25,7 @@ from app.business.access_controls import access_controls_user_has_customer_acces
 from app.datamgmt.alerts.alerts_db import create_case_from_alerts
 from app.datamgmt.alerts.alerts_db import merge_alert_in_case
 from app.datamgmt.case.case_db import get_case
+from app.business.case_timelines import case_ensure_default_timeline_for_escalated_case
 from app.db import db
 from app.iris_engine.access_control.utils import ac_set_new_case_access
 from app.iris_engine.module_handler.module_handler import call_modules_hook
@@ -343,6 +344,10 @@ def alert_cluster_escalate_to_case(cluster: AlertCluster, template_id: Optional[
     # of view the escalation "consumes" a case id and produces nothing.
     # Mirrors the alert-escalation flow in `alerts_routes.py:642`.
     ac_set_new_case_access(iris_current_user, case.case_id, case.client_id)
+
+    case_ensure_default_timeline_for_escalated_case(
+        case.case_id, created_by_id=iris_current_user.id, attach_events=import_as_event
+    )
 
     # Fire the same post-create module hook and history entry the normal
     # alert-escalate path fires — modules that react to new cases (SLA

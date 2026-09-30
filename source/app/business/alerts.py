@@ -23,6 +23,7 @@ from typing import Optional
 from app.business.access_controls import access_controls_user_has_customer_access
 from app.business.managed_assets import managed_assets_observe_alert
 from app.business.managed_assets import managed_assets_observe_case
+from app.business.case_timelines import case_ensure_default_timeline_for_escalated_case
 from app.db import db
 from app import socket_io
 from app.models.alerts import Alert
@@ -624,6 +625,11 @@ def alerts_escalate(alert: Alert, iocs_import_list: Optional[list] = None,
         raise BusinessProcessingError('Failed to create case from alert')
 
     ac_set_new_case_access(_resolve_caller(), case.case_id, case.client_id)
+
+    case_ensure_default_timeline_for_escalated_case(
+        case.case_id, created_by_id=_resolve_caller().id, attach_events=import_as_event
+    )
+
     case = call_modules_hook('on_postload_case_create', case)
 
     add_obj_history_entry(case, 'created')
@@ -786,6 +792,11 @@ def alerts_batch_escalate(alert_ids: list,
         raise BusinessProcessingError('Failed to create case from alerts')
 
     ac_set_new_case_access(_resolve_caller(), case.case_id, case.client_id)
+
+    case_ensure_default_timeline_for_escalated_case(
+        case.case_id, created_by_id=_resolve_caller().id, attach_events=import_as_event
+    )
+
     case = call_modules_hook('on_postload_case_create', case)
 
     add_obj_history_entry(case, 'created')

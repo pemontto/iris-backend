@@ -417,6 +417,12 @@ def get_default_category():
     ).first()
 
 
+def get_case_event_ids(case_identifier):
+    return [row.event_id for row in CasesEvent.query.with_entities(
+        CasesEvent.event_id
+    ).filter_by(case_id=case_identifier).all()]
+
+
 def get_events_by_case(case_identifier):
     return CasesEvent.query.filter(and_(
         CasesEvent.case_id == case_identifier,

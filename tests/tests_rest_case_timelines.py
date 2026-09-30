@@ -42,6 +42,91 @@ class TestsRestCaseTimelines(TestCase):
         self.assertEqual(1, len(defaults))
         self.assertEqual('Main', defaults[0]['name'])
 
+    def _create_alert(self):
+        response = self._subject.create('/api/v2/alerts', {
+            'alert_title': 'Timeline regression',
+            'alert_description': 'Alert imported as an event',
+            'alert_source': 'Test',
+            'alert_source_event_time': '2026-01-01T00:00:00',
+            'alert_severity_id': 4,
+            'alert_status_id': 3,
+            'alert_customer_id': 1,
+        })
+        self.assertEqual(201, response.status_code)
+        return response.json()['alert_id']
+
+    def _escalate_alerts(self, batch=False, import_as_event=False):
+        alert_id = self._create_alert()
+        body = {
+            'iocs_import_list': [],
+            'assets_import_list': [],
+            'import_as_event': import_as_event,
+        }
+        if batch:
+            second_alert_id = self._create_alert()
+            body['alert_ids'] = f'{alert_id},{second_alert_id}'
+            url = '/api/v2/alerts/batch/escalate'
+        else:
+            url = f'/api/v2/alerts/escalate/{alert_id}'
+        response = self._subject.create(url, body)
+        self.assertEqual(200, response.status_code)
+        return response.json()['case_id']
+
+    def _get_default_main_timeline(self, case_id):
+        response = self._subject.get(f'/api/v2/cases/{case_id}/timelines')
+        self.assertEqual(200, response.status_code)
+        timelines = response.json()
+        self.assertEqual(1, len(timelines))
+        self.assertTrue(timelines[0]['is_default'])
+        self.assertEqual('Main', timelines[0]['name'])
+        return timelines[0]['timeline_id']
+
+    def test_escalated_alert_should_have_a_default_main_timeline(self):
+        case_id = self._escalate_alerts()
+        self._get_default_main_timeline(case_id)
+
+    def test_batch_escalated_alerts_should_have_a_default_main_timeline(self):
+        case_id = self._escalate_alerts(batch=True)
+        self._get_default_main_timeline(case_id)
+
+    def test_escalated_cluster_should_have_a_default_main_timeline(self):
+        alert_id = self._create_alert()
+        response = self._subject.create('/api/v2/alert-clusters', {
+            'cluster_title': 'Timeline regression',
+            'cluster_status_id': 1,
+            'cluster_customer_id': 1,
+        })
+        self.assertEqual(201, response.status_code)
+        cluster_id = response.json()['cluster_id']
+        try:
+            response = self._subject.create(
+                f'/api/v2/alert-clusters/{cluster_id}/alerts', {'alert_ids': [alert_id]}
+            )
+            self.assertEqual(200, response.status_code)
+            response = self._subject.create(f'/api/v2/alert-clusters/{cluster_id}/escalate', {})
+            self.assertEqual(200, response.status_code)
+            self._get_default_main_timeline(response.json()['case_id'])
+        finally:
+            self._subject.delete(f'/api/v2/alert-clusters/{cluster_id}')
+
+    def test_escalated_alert_event_should_attach_to_default_main_timeline(self):
+        case_id = self._escalate_alerts(import_as_event=True)
+        self._assert_imported_events_on_main(case_id, 1)
+
+    def test_batch_escalated_alert_events_should_attach_to_default_main_timeline(self):
+        case_id = self._escalate_alerts(batch=True, import_as_event=True)
+        self._assert_imported_events_on_main(case_id, 2)
+
+    def _assert_imported_events_on_main(self, case_id, expected_count):
+        response = self._subject.get(f'/api/v2/cases/{case_id}/events')
+        self.assertEqual(200, response.status_code)
+        events = response.json()['tim']
+        self.assertEqual(expected_count, len(events))
+        timeline_id = self._get_default_main_timeline(case_id)
+        for event in events:
+            self.assertEqual('[ALERT] Timeline regression', event['event_title'])
+            self.assertEqual([timeline_id], event['timeline_ids'])
+
     def test_create_timeline_should_return_201_and_appear_in_list(self):
         case_id = self._subject.create_dummy_case()
         response = self._subject.create(
