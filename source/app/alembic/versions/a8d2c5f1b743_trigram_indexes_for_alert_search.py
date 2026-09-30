@@ -81,11 +81,11 @@ def _enable_pg_trgm():
         return True
 
     try:
-        # A savepoint, because a failed statement poisons the whole
-        # Postgres transaction: without one, a permission error here
-        # would make every later migration in this run fail too.
-        with bind.begin_nested():
-            bind.execute(text('CREATE EXTENSION IF NOT EXISTS pg_trgm'))
+        # Earlier revisions issue raw COMMITs, so the migration bind may
+        # no longer have a server transaction in which to open a savepoint.
+        # A separate autocommit connection also isolates permission errors.
+        with bind.engine.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+            connection.execute(text('CREATE EXTENSION IF NOT EXISTS pg_trgm'))
     except Exception as exception:
         _log.warning(
             'Could not enable the pg_trgm extension (%s). Alert search will '

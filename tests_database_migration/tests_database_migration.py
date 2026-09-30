@@ -113,3 +113,37 @@ class TestsDatabaseMigration(TestCase):
         logs = self._docker.extract_logs('app')
         self.assertTrue(permissions['Administrators'] & _PERMISSION_CASE_ACCESS_MANAGE, logs)
         self.assertFalse(permissions['Analysts'] & _PERMISSION_CASE_ACCESS_MANAGE, logs)
+
+    def _assert_alert_search_trigram_indexes(self):
+        engine = create_engine(_DATABASE_URL)
+        logs = self._docker.extract_logs('app')
+        try:
+            with engine.connect() as connection:
+                self.assertEqual(1, connection.execute(text(
+                    "SELECT count(*) FROM pg_extension WHERE extname = 'pg_trgm'"
+                )).scalar(), logs)
+                indexes = {index['name']: index for index in inspect(connection).get_indexes('alerts')}
+                definitions = dict(connection.execute(text(
+                    "SELECT indexname, indexdef FROM pg_indexes "
+                    "WHERE schemaname = current_schema() AND tablename = 'alerts'"
+                )).all())
+                for column in ('alert_title', 'alert_description', 'alert_source',
+                               'alert_source_ref', 'alert_tags', 'alert_note'):
+                    name = f'ix_alerts_{column}_trgm'
+                    self.assertIn(name, indexes, logs)
+                    self.assertEqual([column], indexes[name]['column_names'], logs)
+                    options = indexes[name]['dialect_options']
+                    self.assertEqual('gin', options['postgresql_using'], logs)
+                    self.assertIn(f'({column} gin_trgm_ops)', definitions[name], logs)
+        finally:
+            engine.dispose()
+
+    def test_fresh_database_should_have_alert_search_trigram_indexes(self):
+        self._docker.compose_up()
+        self._assert_alert_search_trigram_indexes()
+
+    def test_update_from_v2_4_22_should_create_alert_search_trigram_indexes(self):
+        self._docker.compose_up('db')
+        self._dump_database('v2.4.22_empty')
+        self._docker.compose_up()
+        self._assert_alert_search_trigram_indexes()
