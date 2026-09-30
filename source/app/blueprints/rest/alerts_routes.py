@@ -237,10 +237,10 @@ def alerts_add_route() -> Response:
 
     try:
         alert = _load(request_data)
-        result = alerts_create(alert, iocs, assets)
-
-        if not ac_current_user_has_customer_access(result.alert_customer_id):
+        if not ac_current_user_has_customer_access(alert.alert_customer_id):
             return response_error('User not entitled to create alerts for the client')
+
+        result = alerts_create(alert, iocs, assets)
         alert_schema = AlertSchema()
         return response_success('Alert added', data=alert_schema.dump(result))
 

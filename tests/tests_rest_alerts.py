@@ -146,6 +146,50 @@ class TestsRestAlerts(TestCase):
         response = user.create('/api/v2/alerts', body)
         self.assertEqual(403, response.status_code)
 
+    def test_create_alert_should_not_persist_when_user_has_no_customer_access(self):
+        group_identifier = self._subject.create_dummy_group([IRIS_PERMISSION_ALERTS_WRITE])
+        user = self._subject.create_dummy_user()
+        body = {'groups_membership': [group_identifier]}
+        self._subject.create(f'/manage/users/{user.get_identifier()}/groups/update', body)
+
+        alert_title = 'refused v2 alert'
+        body = {
+            'alert_title': alert_title,
+            'alert_severity_id': 4,
+            'alert_status_id': 3,
+            'alert_customer_id': IRIS_INITIAL_CUSTOMER_IDENTIFIER,
+        }
+        response = user.create('/api/v2/alerts', body)
+        self.assertEqual(400, response.status_code)
+        self.assertEqual('User not entitled to create alerts for the client', response.json()['message'])
+
+        response = self._subject.get('/api/v2/alerts', query_parameters={'alert_title': alert_title})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0, response.json()['total'])
+        self.assertEqual([], response.json()['data'])
+
+    def test_legacy_create_alert_should_not_persist_when_user_has_no_customer_access(self):
+        group_identifier = self._subject.create_dummy_group([IRIS_PERMISSION_ALERTS_WRITE])
+        user = self._subject.create_dummy_user()
+        body = {'groups_membership': [group_identifier]}
+        self._subject.create(f'/manage/users/{user.get_identifier()}/groups/update', body)
+
+        alert_title = 'refused legacy alert'
+        body = {
+            'alert_title': alert_title,
+            'alert_severity_id': 4,
+            'alert_status_id': 3,
+            'alert_customer_id': IRIS_INITIAL_CUSTOMER_IDENTIFIER,
+        }
+        response = user.create('/alerts/add', body)
+        self.assertEqual(400, response.status_code)
+        self.assertEqual('User not entitled to create alerts for the client', response.json()['message'])
+
+        response = self._subject.get('/api/v2/alerts', query_parameters={'alert_title': alert_title})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0, response.json()['total'])
+        self.assertEqual([], response.json()['data'])
+
     def test_create_alert_should_return_field_classification_id_null_when_not_provided(self):
         body = {
             'alert_title': 'title',

@@ -312,10 +312,10 @@ class AlertsOperations:
 
         try:
             alert = self._schema.load(request_data)
-            result = alerts_create(alert, iocs, assets)
-
-            if not ac_current_user_has_customer_access(result.alert_customer_id):
+            if not ac_current_user_has_customer_access(alert.alert_customer_id):
                 return response_api_error('User not entitled to create alerts for the client')
+
+            result = alerts_create(alert, iocs, assets)
             return response_api_created(self._schema.dump(result))
 
         except ValidationError as e:
