@@ -117,9 +117,8 @@ class AlertField:
     #: Aliases that mean exactly this field.
     synonyms: tuple = ()
     #: Whether `>=` / `[a TO b]` mean anything on this field. Severity
-    #: ids run least→most severe so they order; status ids are insertion
-    #: order and do not, and `status:>=Closed` answering by row id would
-    #: be a wrong answer delivered confidently.
+    #: names have a canonical rank; status ids are insertion order and
+    #: do not, so `status:>=Closed` cannot be compared by row id.
     ordered: bool = False
 
     def is_enumerable(self) -> bool:

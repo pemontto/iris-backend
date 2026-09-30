@@ -22,12 +22,17 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from sqlalchemy import and_
+from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import Session
 
 from app.datamgmt.filtering import combine_conditions
 from app.datamgmt.lucene import query_compiler
 from app.datamgmt.lucene.query_compiler import compile_alert_query
+from app.models import alerts as alert_models
 from app.models.alerts import Alert
+from app.models.alerts import Severity
 from app.models.errors import SearchQueryError
 
 #: What `post_init` seeds. `is:open` resolves terminal statuses by name,
@@ -71,6 +76,12 @@ class _FakeSession:
     def query(self, *entities):
         self.selected.append([getattr(entity, 'key', None) for entity in entities])
         if len(entities) > 1:
+            if entities[0].key == 'severity_id':
+                # Fresh-install IDs, with names in canonical seed order.
+                return _FakeQuery([
+                    (1, 'Medium'), (2, 'Unspecified'), (3, 'Informational'),
+                    (4, 'Low'), (5, 'High'), (6, 'Critical'),
+                ])
             return _FakeQuery(self._status_rows)
 
         queue = self._queues.get(getattr(entities[0], 'key', None), [[]])
@@ -83,7 +94,9 @@ class _FakeSession:
 def _compile(query, rows_by_key=None, status_rows=_STATUS_ROWS, user_identifier=None):
     """`(sql, params, session)` for an expression."""
     session = _FakeSession(rows_by_key, status_rows)
-    with patch.object(query_compiler, 'db', SimpleNamespace(session=session)):
+    with patch.object(query_compiler, 'db', SimpleNamespace(session=session)), \
+            patch.object(alert_models, 'db', SimpleNamespace(session=session)), \
+            patch.object(alert_models, '_severity_ranks', {}):
         clause = compile_alert_query(query, user_identifier)
 
     compiled = clause.compile(dialect=postgresql.dialect())
@@ -93,7 +106,9 @@ def _compile(query, rows_by_key=None, status_rows=_STATUS_ROWS, user_identifier=
 def _error(test, query, rows_by_key=None, status_rows=_STATUS_ROWS, user_identifier=None):
     session = _FakeSession(rows_by_key, status_rows)
     with test.assertRaises(SearchQueryError) as caught:
-        with patch.object(query_compiler, 'db', SimpleNamespace(session=session)):
+        with patch.object(query_compiler, 'db', SimpleNamespace(session=session)), \
+                patch.object(alert_models, 'db', SimpleNamespace(session=session)), \
+                patch.object(alert_models, '_severity_ranks', {}):
             compile_alert_query(query, user_identifier)
     return caught.exception
 
@@ -281,16 +296,93 @@ class TestEnumResolution(TestCase):
 
 class TestOrderedEnums(TestCase):
 
-    def test_severity_comparison_resolves_the_bound(self):
-        sql, params, _ = _compile('severity:>=High', {'severity_id': [[(3,)]]})
-        self.assertIn('alerts.alert_severity_id >= ', sql)
-        self.assertEqual(3, params['alert_severity_id_1'])
+    def _compile_severity(self, query):
+        # Resolve ranks and bounds against scrambled IDs rather than
+        # supplying the matching IDs from a fake query.
+        engine = create_engine('sqlite://')
+        try:
+            Severity.__table__.create(engine)
+            with engine.begin() as connection:
+                connection.execute(Severity.__table__.insert(), [
+                    {'severity_id': identifier, 'severity_name': name}
+                    for identifier, name in (
+                        (1, 'Medium'), (2, 'Unspecified'), (3, 'Informational'),
+                        (4, 'Low'), (5, 'High'), (6, 'Critical'),
+                    )
+                ])
+            with Session(engine) as session:
+                with patch.object(query_compiler, 'db', SimpleNamespace(session=session)), \
+                        patch.object(alert_models, 'db', SimpleNamespace(session=session)), \
+                        patch.object(alert_models, '_severity_ranks', {}):
+                    clause = compile_alert_query(query)
+            return clause.compile(dialect=postgresql.dialect())
+        finally:
+            engine.dispose()
 
-    def test_severity_range_becomes_two_comparisons(self):
-        sql, _, _ = _compile('severity:[Low TO High]',
-                             {'severity_id': [[(1,)], [(4,)]]})
-        self.assertIn('>=', sql)
-        self.assertIn('<=', sql)
+    def test_severity_comparison_resolves_the_bound(self):
+        for query, identifiers in (
+            ('severity:>=High', [5, 6]),
+            ('severity:>=Medium', [1, 5, 6]),
+            ('severity:>Low', [1, 5, 6]),
+            ('severity:<=Medium', [1, 2, 3, 4]),
+            ('severity:<Low', [2, 3]),
+        ):
+            with self.subTest(query=query):
+                compiled = self._compile_severity(query)
+                self.assertIn('alerts.alert_severity_id IN ', str(compiled))
+                self.assertEqual(identifiers, sorted(compiled.params['alert_severity_id_1']))
+
+    def test_severity_range_selects_matching_identifiers(self):
+        for query, identifiers in (
+            ('severity:[Low TO High]', [1, 4, 5]),
+            ('severity:{Low TO High}', [1]),
+            ('severity:[* TO Medium]', [1, 2, 3, 4]),
+            ('severity:[Medium TO *]', [1, 5, 6]),
+        ):
+            with self.subTest(query=query):
+                compiled = self._compile_severity(query)
+                self.assertIn('alerts.alert_severity_id IN ', str(compiled))
+                self.assertEqual(identifiers, sorted(compiled.params['alert_severity_id_1']))
+
+    def test_ranks_retry_empty_table_and_cache_seeded_rows(self):
+        engine = create_engine('sqlite://')
+        statements = []
+        event.listen(engine, 'before_cursor_execute',
+                     lambda _conn, _cursor, sql, _params, _context, _many: statements.append(sql))
+        try:
+            Severity.__table__.create(engine)
+            with Session(engine) as session:
+                with patch.object(query_compiler, 'db', SimpleNamespace(session=session)), \
+                        patch.object(alert_models, 'db', SimpleNamespace(session=session)), \
+                        patch.object(alert_models, '_severity_ranks', {}):
+                    self.assertEqual({}, alert_models.severity_ranks())
+                    session.execute(Severity.__table__.insert(), [
+                        {'severity_id': identifier, 'severity_name': name}
+                        for identifier, name in (
+                            (1, 'Medium'), (2, 'Unspecified'), (3, 'Informational'),
+                            (4, 'Low'), (5, 'High'), (6, 'Critical'),
+                            (7, 'Other'), (9, 'Another'),
+                        )
+                    ])
+                    statements.clear()
+                    ranks = alert_models.severity_ranks()
+                    self.assertEqual({1: 3, 2: 0, 3: 1, 4: 2, 5: 4, 6: 5, 7: 13, 9: 15}, ranks)
+                    self.assertIs(ranks, alert_models.severity_ranks())
+                    self.assertEqual(1, len(statements))
+                    ordered = session.query(Severity.severity_id).order_by(Severity.severity_rank()).all()
+                    self.assertEqual([2, 3, 4, 1, 5, 6, 7, 9], [row[0] for row in ordered])
+                    sql = str(Severity.severity_rank(Alert.alert_severity_id).compile(
+                        dialect=postgresql.dialect()
+                    ))
+                    self.assertIn('CASE alerts.alert_severity_id', sql)
+                    self.assertNotIn('severities', sql)
+                    statements.clear()
+                    for query in ('severity:>=High', 'severity:<Low', 'severity:[Low TO High]'):
+                        compile_alert_query(query)
+                    # Only the existing name lookups remain: one per bound.
+                    self.assertEqual(4, len(statements))
+        finally:
+            engine.dispose()
 
     def test_status_has_no_order_so_comparison_is_refused(self):
         # Status ids are insertion order. Answering `status:>=Closed` by
@@ -631,7 +723,7 @@ class TestRealisticExpressions(TestCase):
     def test_high_severity_not_closed(self):
         sql, _, _ = _compile('severity:>=High AND -status:Closed',
                              {'severity_id': [[(3,)]], 'status_id': [[(6,)]]})
-        self.assertIn('alerts.alert_severity_id >= ', sql)
+        self.assertIn('alerts.alert_severity_id IN ', sql)
         self.assertIn('IS NOT true', sql)
 
     def test_domain_assets_in_the_last_day(self):

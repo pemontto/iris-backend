@@ -30,9 +30,8 @@ _ALERTS_URL = '/api/v2/alerts'
 _GROUPED_ALERTS_URL = '/api/v2/alerts/grouped'
 _SEARCH_SCHEMA_URL = '/api/v2/alerts/search-schema'
 
-# Seeded by `create_safe_severities` / `create_safe_alert_status`, in this
-# order. Severity identifiers run least to most severe, which is what makes
-# `severity:>=High` a rank comparison rather than an identifier comparison.
+# Historical severity IDs used by older fixtures. Rank regression tests
+# resolve IDs by name because installations can assign different IDs.
 _SEVERITY_MEDIUM = 4
 _SEVERITY_HIGH = 5
 _SEVERITY_CRITICAL = 6
@@ -241,12 +240,14 @@ class TestsRestAlerts(TestCase):
                          [alert['alert_title'] for alert in response['data']])
 
     def test_get_alerts_should_order_by_severity_descending(self):
-        self._create_alert('low', alert_severity_id=2)
-        self._create_alert('high', alert_severity_id=5)
-        self._create_alert('medium', alert_severity_id=3)
+        response = self._subject.get('/api/v2/manage/severities').json()
+        identifiers = {row['severity_name']: row['severity_id'] for row in response['data']}
+        for name in ('Low', 'Critical', 'Medium'):
+            self._create_alert(name, alert_severity_id=identifiers[name])
         response = self._subject.get('/api/v2/alerts',
                                      query_parameters={'order_by': 'severity', 'sort': 'desc'}).json()
-        self.assertEqual([5, 3, 2], [alert['alert_severity_id'] for alert in response['data']])
+        self.assertEqual(['Critical', 'Medium', 'Low'],
+                         [alert['alert_title'] for alert in response['data']])
 
     def test_get_alerts_should_fall_back_to_the_event_time_when_order_by_is_not_a_sortable_column(self):
         self._create_alert('charlie')
@@ -757,11 +758,33 @@ class TestsRestAlertsSearchQuery(TestCase):
         self._create_alert('already closed', alert_status_id=_STATUS_CLOSED)
         self.assertEqual(['already closed'], self._titles('status:closed'))
 
+    def _create_alerts_with_all_severities(self):
+        response = self._subject.get('/api/v2/manage/severities').json()
+        for severity in response['data']:
+            self._create_alert(severity['severity_name'],
+                               alert_severity_id=severity['severity_id'])
+
     def test_get_alerts_should_compare_severities_by_rank(self):
-        self._create_alert('medium one')
-        self._create_alert('high one', alert_severity_id=_SEVERITY_HIGH)
-        self._create_alert('critical one', alert_severity_id=_SEVERITY_CRITICAL)
-        self.assertEqual(['critical one', 'high one'], self._titles('severity:>=High'))
+        self._create_alerts_with_all_severities()
+        for query, names in (
+            ('severity:>=Medium', ['Critical', 'High', 'Medium']),
+            ('severity:>Low', ['Critical', 'High', 'Medium']),
+            ('severity:<=Medium', ['Informational', 'Low', 'Medium', 'Unspecified']),
+            ('severity:<Low', ['Informational', 'Unspecified']),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(names, self._titles(query))
+
+    def test_get_alerts_should_bound_severity_ranges_by_rank(self):
+        self._create_alerts_with_all_severities()
+        for query, names in (
+            ('severity:[Low TO High]', ['High', 'Low', 'Medium']),
+            ('severity:{Low TO High}', ['Medium']),
+            ('severity:[* TO Medium]', ['Informational', 'Low', 'Medium', 'Unspecified']),
+            ('severity:[Medium TO *]', ['Critical', 'High', 'Medium']),
+        ):
+            with self.subTest(query=query):
+                self.assertEqual(names, self._titles(query))
 
     def test_get_alerts_should_combine_clauses_with_an_implicit_and(self):
         self._create_alert('malware beacon', alert_severity_id=_SEVERITY_HIGH)

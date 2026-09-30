@@ -19,7 +19,10 @@
 from datetime import datetime
 
 import uuid
+from threading import Lock
 from sqlalchemy.dialects.postgresql import JSON
+from sqlalchemy import case
+from sqlalchemy import literal
 from sqlalchemy import BigInteger
 from sqlalchemy import String
 from sqlalchemy import Column
@@ -102,6 +105,38 @@ class Severity(db.Model):
     severity_id = Column(Integer, primary_key=True)
     severity_name = Column(Text, nullable=False, unique=True)
     severity_description = Column(Text)
+
+    @staticmethod
+    def severity_rank(column=None):
+        """SQL rank by ID, using the process's static severity ranks."""
+        if column is None:
+            column = Severity.severity_id
+        ranks = severity_ranks()
+        return case(ranks, value=column) if ranks else literal(None)
+
+
+_severity_ranks = {}
+_severity_ranks_lock = Lock()
+
+
+def severity_ranks():
+    """Cache canonical ranks for the process; retry if called before seeding.
+
+    Unknown names follow the canonical names, ordered by ID.
+    """
+    global _severity_ranks
+    if not _severity_ranks:
+        with _severity_ranks_lock:
+            if not _severity_ranks:
+                names = ('Unspecified', 'Informational', 'Low', 'Medium', 'High', 'Critical')
+                canonical = {name: rank for rank, name in enumerate(names)}
+                _severity_ranks = {
+                    identifier: canonical.get(name, len(names) + identifier)
+                    for identifier, name in db.session.query(
+                        Severity.severity_id, Severity.severity_name
+                    ).all()
+                }
+    return _severity_ranks
 
 
 class AlertStatus(db.Model):

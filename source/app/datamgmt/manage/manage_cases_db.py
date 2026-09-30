@@ -678,6 +678,10 @@ def build_filter_case_query(current_user_id,
         elif sort_by == 'state':
             query = query.join(CaseState, Cases.state_id == CaseState.state_id).order_by(order_func(CaseState.state_name))
 
+        elif sort_by == 'severity_id':
+            rank = Severity.severity_rank(Cases.severity_id)
+            query = query.order_by(order_func(rank))
+
         elif hasattr(Cases, sort_by):
             query = query.order_by(order_func(getattr(Cases, sort_by)))
     return query

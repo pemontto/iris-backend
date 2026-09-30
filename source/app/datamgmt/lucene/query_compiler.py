@@ -86,6 +86,8 @@ from app.db import db
 from app.iris_engine.utils.common import parse_bf_date_format
 from app.models.alerts import Alert
 from app.models.alerts import AlertStatus
+from app.models.alerts import Severity
+from app.models.alerts import severity_ranks
 from app.models.errors import SearchQueryError
 
 #: `now`, `now-24h`, `now+1d`. Anchored to *now* rather than to a stored
@@ -424,6 +426,36 @@ class AlertQueryCompiler:
             return build_condition(column, 'in', identifiers)
 
         self._require_ordered(descriptor, value)
+
+        if descriptor.lookup.model is Severity:
+            ranks = severity_ranks()
+
+            def resolve_rank(text, position):
+                identifier = self._single_lookup(
+                    descriptor, TermValue(text, False, position)
+                )
+                return ranks[identifier]
+
+            if isinstance(value, ComparisonValue):
+                bound = resolve_rank(value.text, value.position)
+                compare = {
+                    'gt': lambda rank: rank > bound,
+                    'gte': lambda rank: rank >= bound,
+                    'lt': lambda rank: rank < bound,
+                    'lte': lambda rank: rank <= bound,
+                }[value.operator]
+            else:
+                lower = resolve_rank(value.lower, value.position) if value.lower is not None else None
+                upper = resolve_rank(value.upper, value.position) if value.upper is not None else None
+
+                def compare(rank):
+                    return (
+                        (lower is None or (rank >= lower if value.include_lower else rank > lower))
+                        and (upper is None or (rank <= upper if value.include_upper else rank < upper))
+                    )
+
+            identifiers = [identifier for identifier, rank in ranks.items() if compare(rank)]
+            return build_condition(column, 'in', identifiers)
 
         if isinstance(value, ComparisonValue):
             # The lookup resolves *terms*; a comparison carries the same

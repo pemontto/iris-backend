@@ -333,9 +333,7 @@ def _alert_sort_expression(order_by: str | None):
         return func.lower(Alert.alert_title)
 
     if order_by == 'severity':
-        # Severity ids run from least to most severe, so the id sorts the
-        # way the names read — and costs no subquery.
-        return Alert.alert_severity_id
+        return Severity.severity_rank(Alert.alert_severity_id)
 
     if order_by == 'status':
         return db.session.query(AlertStatus.status_name).filter(

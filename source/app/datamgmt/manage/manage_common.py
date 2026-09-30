@@ -28,7 +28,7 @@ def get_severities_list():
     returns:
         list: A list of severities
     """
-    return db.session.query(Severity).distinct().all()
+    return db.session.query(Severity).order_by(Severity.severity_rank()).all()
 
 
 def get_severity_by_id(status_id: int) -> Severity:
@@ -56,6 +56,10 @@ def search_severity_by_name(name: str, exact_match: bool = True) -> Severity:
         Severity: The severity object
     """
     if exact_match:
-        return db.session.query(Severity).filter(func.lower(Severity.severity_name) == name.lower()).all()
+        return db.session.query(Severity).filter(
+            func.lower(Severity.severity_name) == name.lower()
+        ).order_by(Severity.severity_rank()).all()
 
-    return db.session.query(Severity).filter(Severity.severity_name.ilike(f'%{name}%')).all()
+    return db.session.query(Severity).filter(
+        Severity.severity_name.ilike(f'%{name}%')
+    ).order_by(Severity.severity_rank()).all()

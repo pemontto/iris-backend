@@ -61,7 +61,8 @@ def _dump_model_taxonomy(
     description_column: str | None,
 ) -> list[dict[str, Any]]:
     id_col = getattr(model, id_column)
-    rows = model.query.order_by(id_col.asc()).all()
+    order = Severity.severity_rank() if model is Severity else id_col.asc()
+    rows = model.query.order_by(order).all()
     result: list[dict[str, Any]] = []
     for row in rows:
         entry: dict[str, Any] = {

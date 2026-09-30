@@ -91,7 +91,9 @@ def _list_endpoint(
             if clauses:
                 query = query.filter(or_(*clauses))
         order_column_obj = getattr(model, order_column, None)
-        if order_column_obj is not None:
+        if model is Severity:
+            query = query.order_by(Severity.severity_rank())
+        elif order_column_obj is not None:
             query = query.order_by(order_column_obj.asc())
         paginated = paginate(model, pagination_parameters, query)
         return response_api_success({

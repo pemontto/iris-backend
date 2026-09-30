@@ -575,7 +575,7 @@ def iris_alerts_resolution_list(args: dict) -> dict:
     mvp=True,
 )
 def iris_alerts_severity_list(args: dict) -> dict:
-    rows = Severity.query.order_by(Severity.severity_id).all()
+    rows = Severity.query.order_by(Severity.severity_rank()).all()
     return {
         'data': [
             {

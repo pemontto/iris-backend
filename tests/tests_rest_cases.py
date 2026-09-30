@@ -39,6 +39,23 @@ class TestsRestCases(TestCase):
     def tearDown(self):
         self._subject.clear_database()
 
+    def test_get_cases_should_order_by_severity_descending(self):
+        response = self._subject.get('/api/v2/manage/severities').json()
+        identifiers = {row['severity_name']: row['severity_id'] for row in response['data']}
+        created = {}
+        for name in ('Low', 'Critical', 'Medium'):
+            identifier = self._subject.create_dummy_case()
+            created[identifier] = name
+            response = self._subject.update(f'/api/v2/cases/{identifier}',
+                                            {'severity_id': identifiers[name]})
+            self.assertEqual(200, response.status_code)
+        response = self._subject.get('/api/v2/cases', query_parameters={
+            'order_by': 'severity_id', 'sort_dir': 'desc', 'per_page': 100,
+        }).json()
+        self.assertEqual(['Critical', 'Medium', 'Low'],
+                         [created[row['case_id']] for row in response['data']
+                          if row['case_id'] in created])
+
     def test_manage_case_filter_api_rest_should_fail(self):
         self._subject.create_dummy_case()
         response = self._subject.get('/manage/cases/filter').json()
