@@ -26,11 +26,13 @@ import shutil
 import string
 import tempfile
 from flask import current_app
+from flask import g
 from marshmallow import EXCLUDE
 from marshmallow import Schema
 from marshmallow import fields
 from marshmallow import post_dump
 from marshmallow import post_load
+from marshmallow import pre_dump
 from marshmallow import pre_load
 from marshmallow import validates_schema
 from marshmallow.exceptions import ValidationError
@@ -55,6 +57,7 @@ from app.datamgmt.datastore.datastore_db import datastore_get_standard_path
 from app.datamgmt.manage.manage_attribute_db import merge_custom_attributes
 from app.datamgmt.manage.manage_tags_db import add_db_tag
 from app.datamgmt.case.case_iocs_db import get_ioc_links
+from app.datamgmt.case.case_iocs_db import get_iocs_links
 from app.datamgmt.case.case_tasks_db import get_task_assignees
 from app.iris_engine.access_control.utils import ac_mask_from_val_list
 from app.iris_engine.utils.proxy_exceptions import proxy_exceptions_errors
@@ -1061,7 +1064,34 @@ class IocSchemaForAPIV2(ma.SQLAlchemyAutoSchema):
     ioc_type: Optional[IocTypeSchema] = ma.Nested(IocTypeSchema, required=False)
     tlp = ma.Nested(TlpSchema)
 
+    @pre_dump(pass_many=True)
+    def prepare_links(self, iocs, many, **kwargs):
+        if 'link' not in self.dump_fields:
+            return iocs
+
+        # Keep links request-local because shared schemas serve concurrent greenlets.
+        cache_key = f'_ioc_links_{id(self)}'
+        g.pop(cache_key, None)
+        if many:
+            iocs = list(iocs)
+            if iocs:
+                limitations = ac_get_fast_user_cases_access(iris_current_user.id)
+                setattr(g, cache_key, get_iocs_links(iocs, limitations))
+        return iocs
+
+    @post_dump(pass_many=True)
+    def clear_links(self, data, **kwargs):
+        if 'link' not in self.dump_fields:
+            return data
+
+        g.pop(f'_ioc_links_{id(self)}', None)
+        return data
+
     def get_link(self, ioc):
+        links = g.get(f'_ioc_links_{id(self)}', {})
+        if ioc.ioc_id in links:
+            return links[ioc.ioc_id]
+
         user_search_limitations = ac_get_fast_user_cases_access(iris_current_user.id)
         ial = get_ioc_links(ioc, user_search_limitations)
         return [row._asdict() for row in ial]

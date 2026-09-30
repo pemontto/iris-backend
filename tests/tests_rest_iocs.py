@@ -144,6 +144,65 @@ class TestsRestIocs(TestCase):
         response = self._subject.get(f'/api/v2/cases/{case_identifier2}/iocs').json()
         self.assertEqual(case_identifier1, response['data'][0]['link'][0]['case_id'])
 
+    def _create_link_cases(self):
+        customer_identifier = self._subject.create_dummy_customer()
+        customer = self._subject.get('/manage/customers/list').json()['data']
+        customer_name = next(row['customer_name'] for row in customer if row['customer_id'] == customer_identifier)
+        cases = [self._subject.create_dummy_case(customer_identifier) for _ in range(3)]
+        links = {}
+        for case_identifier in cases:
+            case = self._subject.get(f'/api/v2/cases/{case_identifier}').json()
+            links[case_identifier] = {'case_id': case_identifier, 'case_name': case['case_name'],
+                                      'client_name': customer_name}
+
+        ioc_ids = []
+        for value in ['198.51.100.11', '198.51.100.12', '198.51.100.13']:
+            body = {'ioc_type_id': 1, 'ioc_tlp_id': 2, 'ioc_value': value}
+            ioc_ids.append(self._subject.create(f'/api/v2/cases/{cases[0]}/iocs', body).json()['ioc_id'])
+        for case_identifier in cases[1:]:
+            values = ['198.51.100.11', '198.51.100.12'] if case_identifier == cases[1] else ['198.51.100.11']
+            for value in values:
+                body = {'ioc_type_id': 1, 'ioc_tlp_id': 2, 'ioc_value': value}
+                self._subject.create(f'/api/v2/cases/{case_identifier}/iocs', body)
+        # Same value with another type must not link to the third source IOC.
+        self._subject.create(f'/api/v2/cases/{cases[1]}/iocs',
+                             {'ioc_type_id': 2, 'ioc_tlp_id': 2, 'ioc_value': '198.51.100.13'})
+        return cases, links, ioc_ids
+
+    def test_get_iocs_should_return_exact_links_for_each_value_and_type(self):
+        cases, links, ioc_ids = self._create_link_cases()
+        response = self._subject.get(f'/api/v2/cases/{cases[0]}/iocs').json()
+        actual = {ioc['ioc_id']: ioc['link'] for ioc in response['data']}
+        self.assertEqual(set(ioc_ids), set(actual))
+        # SQL has no ORDER BY; compare complete entries without assuming a query plan.
+        self.assertCountEqual([links[cases[1]], links[cases[2]]], actual[ioc_ids[0]])
+        self.assertCountEqual([links[cases[1]]], actual[ioc_ids[1]])
+        self.assertEqual([], actual[ioc_ids[2]])
+
+    def test_get_iocs_should_exclude_links_to_inaccessible_cases(self):
+        cases, links, ioc_ids = self._create_link_cases()
+        user = self._subject.create_dummy_user()
+        for case_identifier in cases[:2]:
+            response = self._subject.grant_case_access(user, case_identifier)
+            self.assertEqual(200, response.status_code)
+        response = user.get(f'/api/v2/cases/{cases[0]}/iocs')
+        self.assertEqual(200, response.status_code)
+        actual = {ioc['ioc_id']: ioc['link'] for ioc in response.json()['data']}
+        self.assertEqual(set(ioc_ids), set(actual))
+        for ioc_identifier in ioc_ids[:2]:
+            self.assertCountEqual([links[cases[1]]], actual[ioc_identifier])
+        self.assertEqual([], actual[ioc_ids[2]])
+
+    def test_get_iocs_should_return_empty_links_with_access_only_to_source_case(self):
+        cases, _, ioc_ids = self._create_link_cases()
+        user = self._subject.create_dummy_user()
+        response = self._subject.grant_case_access(user, cases[0])
+        self.assertEqual(200, response.status_code)
+        response = user.get(f'/api/v2/cases/{cases[0]}/iocs')
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({ioc_identifier: [] for ioc_identifier in ioc_ids},
+                         {ioc['ioc_id']: ioc['link'] for ioc in response.json()['data']})
+
     def test_create_ioc_should_include_field_link(self):
         case_identifier = self._subject.create_dummy_case()
         body = {'ioc_type_id': 1, 'ioc_tlp_id': 2, 'ioc_value': '8.8.8.8', 'ioc_description': 'rewrw', 'ioc_tags': ''}

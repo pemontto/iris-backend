@@ -17,6 +17,8 @@
 #  Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 from sqlalchemy import and_
+from sqlalchemy import or_
+from sqlalchemy import tuple_
 
 from app.datamgmt.db_operations import db_create
 from app.datamgmt.db_operations import db_delete
@@ -153,6 +155,54 @@ def get_ioc_links(ioc, user_search_limitations):
      .all())
 
     return related_iocs
+
+
+def get_iocs_links(iocs, user_search_limitations):
+    """Return links for a collection without querying once per IOC."""
+    links = {ioc.ioc_id: [] for ioc in iocs}
+    if not iocs or not user_search_limitations:
+        return links
+
+    pairs = list(dict.fromkeys((ioc.ioc_value, ioc.ioc_type_id) for ioc in iocs))
+    grouped = {}
+    for offset in range(0, len(pairs), 1000):
+        non_null_pairs = []
+        conditions = []
+        for value, type_id in pairs[offset:offset + 1000]:
+            if value is None or type_id is None:
+                # Tuple IN does not match NULL; SQLAlchemy equality renders IS NULL.
+                conditions.append(and_(Ioc.ioc_value == value, Ioc.ioc_type_id == type_id))
+            else:
+                non_null_pairs.append((value, type_id))
+        if non_null_pairs:
+            conditions.append(tuple_(Ioc.ioc_value, Ioc.ioc_type_id).in_(non_null_pairs))
+
+        rows = (Ioc.query.with_entities(
+            Ioc.ioc_id,
+            Ioc.ioc_value,
+            Ioc.ioc_type_id,
+            Cases.case_id,
+            Cases.name.label('case_name'),
+            Client.name.label('client_name')
+        ).filter(
+            or_(*conditions),
+            Cases.case_id.in_(user_search_limitations)
+        ).join(Ioc.case)
+         .join(Cases.client)
+         .all())
+        for row in rows:
+            grouped.setdefault((row.ioc_value, row.ioc_type_id), []).append(row)
+
+    for ioc in iocs:
+        for row in grouped.get((ioc.ioc_value, ioc.ioc_type_id), []):
+            if row.ioc_id == ioc.ioc_id:
+                continue
+            links[ioc.ioc_id].append({
+                'case_id': row.case_id,
+                'case_name': row.case_name,
+                'client_name': row.client_name
+            })
+    return links
 
 
 def add_ioc(ioc: Ioc, user_id, caseid):
