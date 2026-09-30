@@ -31,6 +31,29 @@ class TestsRestEvents(TestCase):
     def tearDown(self):
         self._subject.clear_database()
 
+    def test_update_event_should_merge_custom_attributes_when_existing_value_is_null(self):
+        case_identifier = self._subject.create_dummy_case()
+        with self._subject.custom_attributes_template('event'):
+            body = {'event_title': 'null merge event', 'event_category_id': 1,
+                    'event_date': '2025-03-26T00:00:00.000', 'event_tz': '+00:00',
+                    'event_assets': [], 'event_iocs': []}
+            created = self._subject.create(f'/api/v2/cases/{case_identifier}/events', body).json()
+            identifier = created['event_id']
+            path = f'/api/v2/cases/{case_identifier}/events/{identifier}'
+            self.assertIsNone(self._subject.get(path).json()['custom_attributes'])
+
+            value = 'persisted-event-value'
+            update_body = {
+                'event_title': 'null merge event', 'event_category_id': 1,
+                'event_date': '2025-03-26T00:00:00.000', 'event_tz': '+00:00',
+                'event_assets': [], 'event_iocs': [],
+                'custom_attributes': {'Null merge regression': {'Value': value}}
+            }
+            response = self._subject.update(path, update_body)
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(value, self._subject.get(path).json()['custom_attributes']
+                             ['Null merge regression']['Value']['value'])
+
     def test_create_event_should_return_201(self):
         case_identifier = self._subject.create_dummy_case()
         body = {'event_title': 'title', 'event_category_id': 1,

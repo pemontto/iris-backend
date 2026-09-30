@@ -32,6 +32,25 @@ class TestsRestAssets(TestCase):
     def tearDown(self):
         self._subject.clear_database()
 
+    def test_update_asset_should_merge_custom_attributes_when_existing_value_is_null(self):
+        case_identifier = self._subject.create_dummy_case()
+        with self._subject.custom_attributes_template('asset'):
+            created = self._subject.create(
+                f'/api/v2/cases/{case_identifier}/assets',
+                {'asset_type_id': 1, 'asset_name': 'null_merge_asset'}
+            ).json()
+            identifier = created['asset_id']
+            path = f'/api/v2/cases/{case_identifier}/assets/{identifier}'
+            self.assertIsNone(self._subject.get(path).json()['custom_attributes'])
+
+            value = 'persisted-asset-value'
+            response = self._subject.update(path, {
+                'custom_attributes': {'Null merge regression': {'Value': value}}
+            })
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(value, self._subject.get(path).json()['custom_attributes']
+                             ['Null merge regression']['Value']['value'])
+
     def test_create_asset_should_return_201(self):
         case_identifier = self._subject.create_dummy_case()
         body = {'asset_type_id': 1, 'asset_name': 'admin_laptop_test'}

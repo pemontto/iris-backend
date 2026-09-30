@@ -17,6 +17,8 @@
 #  Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import os
+from contextlib import contextmanager
+from copy import deepcopy
 from time import sleep
 from uuid import uuid4
 from pathlib import Path
@@ -91,6 +93,54 @@ class Iris:
 
     def delete(self, path):
         return self._api.delete(path)
+
+    @contextmanager
+    def custom_attributes_template(self, object_type):
+        """Temporarily add a field, then restore the template and retained customer."""
+        template = self.get('/api/v2/manage/custom-attributes', {'attribute_for': object_type}).json()[0]
+        original_content = deepcopy(template['attribute_content'])
+        temporary_content = deepcopy(original_content)
+        temporary_content['Null merge regression'] = {
+            'Value': {'type': 'input_string', 'value': '', 'mandatory': False}
+        }
+        path = f"/api/v2/manage/custom-attributes/{template['attribute_id']}"
+        customer_path = f'/api/v2/manage/customers/{IRIS_INITIAL_CUSTOMER_IDENTIFIER}'
+        initial_customer = self.get(customer_path).json() if object_type == 'client' else None
+        try:
+            response = self.update(path, {'attribute_content': temporary_content})
+            if response.status_code != 200:
+                raise AssertionError(f'Failed to configure {object_type} template: {response.status_code}')
+            yield
+            current = self.get(path).json()
+            if current['attribute_content'] != temporary_content:
+                raise AssertionError(f'{object_type} template was changed by the values update')
+        finally:
+            try:
+                response = self.update(path, {
+                    'attribute_content': original_content,
+                    'partial_overwrite': True
+                })
+                if response.status_code != 200:
+                    raise AssertionError(f'Failed to restore {object_type} template: {response.status_code}')
+                if self.get(path).json()['attribute_content'] != original_content:
+                    raise AssertionError(f'{object_type} template was not restored')
+            finally:
+                if initial_customer is not None:
+                    original_attributes = initial_customer['custom_attributes']
+                    original_values = original_attributes
+                    if original_attributes is not None:
+                        original_values = {
+                            tab: {field: definition['value'] for field, definition in fields.items()}
+                            for tab, fields in original_attributes.items()
+                        }
+                    response = self.update(customer_path, {
+                        'customer_name': initial_customer['customer_name'],
+                        'custom_attributes': original_values
+                    })
+                    if response.status_code != 200:
+                        raise AssertionError('Failed to restore initial customer custom attributes')
+                    if self.get(customer_path).json()['custom_attributes'] != original_attributes:
+                        raise AssertionError('Initial customer custom attributes were not restored')
 
     def create_report(self, data, template_name):
         file_path = f'data/report_templates/{template_name}'

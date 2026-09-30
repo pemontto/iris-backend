@@ -30,6 +30,28 @@ class TestsRestIocs(TestCase):
     def tearDown(self):
         self._subject.clear_database()
 
+    def test_update_ioc_should_merge_custom_attributes_when_existing_value_is_null(self):
+        case_identifier = self._subject.create_dummy_case()
+        with self._subject.custom_attributes_template('ioc'):
+            body = {'ioc_type_id': 1, 'ioc_tlp_id': 2, 'ioc_value': 'null-merge-ioc',
+                    'ioc_description': '', 'ioc_tags': ''}
+            created = self._subject.create(f'/api/v2/cases/{case_identifier}/iocs', body).json()
+            identifier = created['ioc_id']
+            path = f'/api/v2/cases/{case_identifier}/iocs/{identifier}'
+            self.assertIsNone(self._subject.get(path).json()['custom_attributes'])
+
+            empty_update = self._subject.update(path, {'custom_attributes': {}})
+            self.assertEqual(200, empty_update.status_code)
+            self.assertIsNone(empty_update.json()['custom_attributes'])
+
+            value = 'persisted-ioc-value'
+            response = self._subject.update(path, {
+                'custom_attributes': {'Null merge regression': {'Value': value}}
+            })
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(value, self._subject.get(path).json()['custom_attributes']
+                             ['Null merge regression']['Value']['value'])
+
     def test_get_ioc_should_not_fail(self):
         response = self._subject.get('/case/ioc/list').json()
         self.assertEqual('success', response['status'])

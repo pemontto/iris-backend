@@ -16,6 +16,7 @@
 #  along with this program; if not, write to the Free Software Foundation,
 #  Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+import copy
 import json
 import logging as logger
 from sqlalchemy.orm.attributes import flag_modified
@@ -196,6 +197,9 @@ def merge_custom_attributes(data, obj_id, object_type, overwrite=False):
         if overwrite:
             log.warning(f'Overwriting all {object_type}')
             return get_default_custom_attributes(object_type)
+
+        if obj.custom_attributes is None and data:
+            obj.custom_attributes = copy.deepcopy(get_default_custom_attributes(object_type) or {})
 
         for tab in data:
             if obj.custom_attributes.get(tab) is None:

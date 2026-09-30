@@ -33,6 +33,24 @@ class TestsRestCustomers(TestCase):
     def tearDown(self):
         self._subject.clear_database()
 
+    def test_update_customer_should_merge_custom_attributes_when_existing_value_is_null(self):
+        with self._subject.custom_attributes_template('client'):
+            created = self._subject.create('/api/v2/manage/customers', {
+                'customer_name': 'Null merge customer'
+            }).json()
+            identifier = created['customer_id']
+            path = f'/api/v2/manage/customers/{identifier}'
+            self.assertIsNone(self._subject.get(path).json()['custom_attributes'])
+
+            value = 'persisted-customer-value'
+            response = self._subject.update(path, {
+                'customer_name': 'Null merge customer',
+                'custom_attributes': {'Null merge regression': {'Value': value}}
+            })
+            self.assertEqual(200, response.status_code)
+            self.assertEqual(value, self._subject.get(path).json()['custom_attributes']
+                             ['Null merge regression']['Value']['value'])
+
     def test_create_customer_should_return_200_when_user_has_customer_write_right(self):
         group_identifier = self._subject.create_dummy_group([IRIS_PERMISSION_CUSTOMERS_WRITE])
         user = self._subject.create_dummy_user()
