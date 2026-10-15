@@ -92,6 +92,23 @@ def _strip_readonly_alert_fields(payload):
     return {k: v for k, v in payload.items() if k not in _ALERT_READONLY_UPDATE_FIELDS}
 
 
+def _reject_nested_alert_update_fields(payload):
+    """Reject relationship input before nested schemas can load ORM objects."""
+    if not isinstance(payload, dict):
+        return
+    messages = {
+        'severity': 'Use alert_severity_id instead of severity.',
+        'status': 'Use alert_status_id instead of status.',
+        'customer': 'Customer cannot be changed on alert update; set alert_customer_id at creation.',
+        'classification': 'Use alert_classification_id instead of classification.',
+        'owner': 'Use alert_owner_id instead of owner.',
+        'resolution_status': 'Use alert_resolution_status_id instead of resolution_status.',
+    }
+    errors = {field: [message] for field, message in messages.items() if field in payload}
+    if errors:
+        raise ValidationError(errors)
+
+
 # Free-text fields that can run to kilobytes. The history records that
 # they were edited, not what they were edited to — spelling a whole
 # alert body into an activity line is unreadable and pointless.
@@ -400,6 +417,7 @@ class AlertsOperations:
             # customer the caller cannot see hides it from the rightful
             # owner and plants it under another tenant's view.
             request_data = _strip_readonly_alert_fields(request.get_json())
+            _reject_nested_alert_update_fields(request_data)
             # Built before the schema load: `load(instance=alert)` mutates
             # the alert in place, and `pristine_alert` is only a shallow
             # copy, so its scalars are the pre-update values right up

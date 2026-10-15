@@ -424,6 +424,47 @@ class TestsRestAlerts(TestCase):
         response = self._subject.update(f'/api/v2/alerts/{identifier}', {'alert_title': 'new_title'})
         self.assertEqual(200, response.status_code)
 
+    def test_update_alert_should_reject_nested_severity_without_writing(self):
+        alert = self._create_alert('title')
+        identifier = alert['alert_id']
+        severities_url = '/api/v2/manage/severities'
+        severities = self._subject.get(severities_url).json()
+        response = self._subject.update(f'{_ALERTS_URL}/{identifier}', {
+            'alert_title': 'must not be saved',
+            'alert_severity_id': _SEVERITY_HIGH,
+            'severity': {'severity_id': _SEVERITY_HIGH, 'severity_name': 'must not be renamed'},
+        })
+        self.assertEqual(400, response.status_code)
+        self.assertEqual(['Use alert_severity_id instead of severity.'], response.json()['data']['severity'])
+        persisted = self._subject.get(f'{_ALERTS_URL}/{identifier}').json()
+        self.assertEqual('title', persisted['alert_title'])
+        self.assertEqual(_SEVERITY_MEDIUM, persisted['alert_severity_id'])
+        self.assertEqual(severities, self._subject.get(severities_url).json())
+
+    def test_update_alert_should_reject_other_nested_relationships(self):
+        alert = self._create_alert('title')
+        url = f"{_ALERTS_URL}/{alert['alert_id']}"
+        relationships = [
+            ('status', {'status_id': _STATUS_CLOSED}, 'alert_status_id'),
+            ('customer', {'customer_id': IRIS_INITIAL_CUSTOMER_IDENTIFIER}, 'alert_customer_id'),
+            ('classification', {'id': 1}, 'alert_classification_id'),
+            ('owner', {'id': ADMINISTRATOR_USER_IDENTIFIER}, 'alert_owner_id'),
+            ('resolution_status', {'resolution_status_id': 1}, 'alert_resolution_status_id'),
+        ]
+        for field, value, identifier_field in relationships:
+            with self.subTest(field=field):
+                response = self._subject.update(url, {field: value})
+                self.assertEqual(400, response.status_code)
+                self.assertIn(identifier_field, response.json()['data'][field][0])
+
+    def test_update_alert_should_update_alert_severity_id(self):
+        alert = self._create_alert('title')
+        url = f"{_ALERTS_URL}/{alert['alert_id']}"
+        response = self._subject.update(url, {'alert_severity_id': _SEVERITY_HIGH})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(_SEVERITY_HIGH, response.json()['alert_severity_id'])
+        self.assertEqual(_SEVERITY_HIGH, self._subject.get(url).json()['alert_severity_id'])
+
     def test_update_alert_should_return_alert_title(self):
         body = {
             'alert_title': 'title',
